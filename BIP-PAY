@@ -474,3 +474,4 @@ export default Dashboard;
 📌 Conclusão
 
 Agora, o Painel Administrativo da BIP-PAY está configurado, permitindo a gestão total das operações da carteira. Ele inclui login seguro, controle de taxas, dashboard de transações e retirada dos fundos acumulados.
+
