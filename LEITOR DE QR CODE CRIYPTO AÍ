@@ -1,0 +1,188 @@
+
+Backend do Sistema
+
+1. Banco de Dados
+
+Novas Tabelas e Atualizações:
+
+-- Tabela de Usuários (Atualizada)
+ALTER TABLE users ADD COLUMN referral_bonus DECIMAL(10, 2) DEFAULT 0;
+
+-- Tabela de Vídeos Publicitários
+CREATE TABLE ad_videos (
+    id SERIAL PRIMARY KEY,
+    url VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabela de Indicados Ativos
+CREATE TABLE active_referrals (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    referred_user_id INT REFERENCES users(id),
+    is_active BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabela de Reivindicações de Bônus
+CREATE TABLE referral_claims (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    bonus_amount DECIMAL(10, 4) NOT NULL,
+    ad_video_id INT REFERENCES ad_videos(id),
+    claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+---
+
+2. Funcionalidades Backend
+
+Controle de Indicados Ativos
+
+app.post("/update-referral-status", async (req, res) => {
+  const { referredUserId } = req.body;
+
+  // Verifica se o indicado ativou staking e farm
+  const userInvestments = await db.query(
+    "SELECT staking_active, farm_active FROM users WHERE id = $1",
+    [referredUserId]
+  );
+
+  if (userInvestments.rows[0].staking_active && userInvestments.rows[0].farm_active) {
+    await db.query(
+      "UPDATE active_referrals SET is_active = TRUE WHERE referred_user_id = $1",
+      [referredUserId]
+    );
+    res.json({ message: "Indicado atualizado como ativo!" });
+  } else {
+    res.status(400).json({ message: "Indicado não atende aos critérios de atividade." });
+  }
+});
+
+
+---
+
+Reivindicação de Bônus com Vídeo Publicitário
+
+app.post("/claim-bonus", async (req, res) => {
+  const { userId, videoId } = req.body;
+
+  // Verifica se o usuário tem 10 indicados ativos
+  const activeReferrals = await db.query(
+    "SELECT COUNT(*) AS active_count FROM active_referrals WHERE user_id = $1 AND is_active = TRUE",
+    [userId]
+  );
+
+  if (activeReferrals.rows[0].active_count < 10) {
+    return res.status(400).json({ message: "Você precisa de pelo menos 10 indicados ativos para reivindicar o bônus." });
+  }
+
+  const bonusAmount = 0.0025;
+
+  // Registra a reivindicação
+  await db.query(
+    "INSERT INTO referral_claims (user_id, bonus_amount, ad_video_id) VALUES ($1, $2, $3)",
+    [userId, bonusAmount, videoId]
+  );
+
+  // Credita o bônus no saldo do usuário
+  await db.query("UPDATE users SET balance = balance + $1 WHERE id = $2", [bonusAmount, userId]);
+
+  res.json({ message: "Bônus de indicação reivindicado com sucesso!" });
+});
+
+
+---
+
+Frontend
+
+1. Tela de Reivindicação de Bônus
+
+Componente: ClaimBonus.jsx
+
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ClaimBonus = ({ userId }) => {
+  const [canClaim, setCanClaim] = useState(false);
+  const [videoUrl, setVideoUrl] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    // Verifica se o usuário pode reivindicar o bônus
+    axios.get(`/check-referral-status?userId=${userId}`).then((res) => {
+      setCanClaim(res.data.canClaim);
+      setVideoUrl(res.data.videoUrl);
+    });
+  }, [userId]);
+
+  const claimBonus = () => {
+    axios
+      .post("/claim-bonus", { userId, videoId: 1 }) // Exemplo com videoId fixo
+      .then((res) => setMessage(res.data.message))
+      .catch((err) => setMessage(err.response.data.message));
+  };
+
+  return (
+    <div>
+      <h2>Reivindicar Bônus</h2>
+      {canClaim ? (
+        <>
+          <video controls src={videoUrl} />
+          <button onClick={claimBonus}>Reivindicar Bônus Após o Vídeo</button>
+        </>
+      ) : (
+        <p>Você ainda não possui 10 indicados ativos.</p>
+      )}
+      {message && <p>{message}</p>}
+    </div>
+  );
+};
+
+export default ClaimBonus;
+
+
+---
+
+2. Tela Principal Atualizada
+
+Componente: App.jsx
+
+import React, { useState } from "react";
+import Login from "./components/Login";
+import Dashboard from "./components/Dashboard";
+import StakingAndFarm from "./components/StakingAndFarm";
+import Withdraw from "./components/Withdraw";
+import ReferralProgram from "./components/ReferralProgram";
+import ClaimBonus from "./components/ClaimBonus";
+
+function App() {
+  const [authenticated, setAuthenticated] = useState(false);
+  const [userId, setUserId] = useState(null);
+
+  if (!authenticated) {
+    return <Login setAuthenticated={setAuthenticated} setUserId={setUserId} />;
+  }
+
+  return (
+    <div>
+      <h1>Sistema de Recompensas QR CODE CRYPTO AI</h1>
+      <Dashboard userId={userId} />
+      <StakingAndFarm userId={userId} />
+      <Withdraw userId={userId} />
+      <ReferralProgram userId={userId} />
+      <ClaimBonus userId={userId} />
+    </div>
+  );
+}
+
+export default App;
+
+
+
+
+
+
+
+
