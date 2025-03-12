@@ -1,0 +1,380 @@
+Vamos integrar o **frontend** e o **backend** da **BiP Pay** em um único projeto completo. O backend será construído usando **Node.js** com **Express** e **MongoDB** para armazenamento de dados. O frontend continuará usando **React** para a interface do usuário.
+
+---
+
+### **Estrutura do Projeto**
+
+```
+bip-pay/
+├── backend/
+│   ├── config/
+│   │   └── db.js
+│   ├── controllers/
+│   │   ├── authController.js
+│   │   ├── paymentController.js
+│   │   ├── stakingController.js
+│   │   └── adminController.js
+│   ├── models/
+│   │   ├── User.js
+│   │   ├── Transaction.js
+│   │   └── Staking.js
+│   ├── routes/
+│   │   ├── authRoutes.js
+│   │   ├── paymentRoutes.js
+│   │   ├── stakingRoutes.js
+│   │   └── adminRoutes.js
+│   ├── middleware/
+│   │   └── authMiddleware.js
+│   ├── utils/
+│   │   └── blockchain.js
+│   └── server.js
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Login.jsx
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Staking.jsx
+│   │   │   └── AdminPanel.jsx
+│   │   ├── App.jsx
+│   │   ├── index.js
+│   │   └── api.js
+│   └── package.json
+├── package.json
+└── README.md
+```
+
+---
+
+### **Backend (Node.js + Express + MongoDB)**
+
+#### **1. Configuração do Banco de Dados (`backend/config/db.js`)**
+```javascript
+const mongoose = require("mongoose");
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect("mongodb://localhost:27017/bip-pay", {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("MongoDB conectado com sucesso.");
+  } catch (error) {
+    console.error("Erro ao conectar ao MongoDB:", error);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+```
+
+#### **2. Modelos (`backend/models/`)**
+
+- **User.js**:
+```javascript
+const mongoose = require("mongoose");
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  balance: { type: Number, default: 0 },
+  isAdmin: { type: Boolean, default: false },
+});
+
+module.exports = mongoose.model("User", userSchema);
+```
+
+- **Transaction.js**:
+```javascript
+const mongoose = require("mongoose");
+
+const transactionSchema = new mongoose.Schema({
+  sender: { type: String, required: true },
+  recipient: { type: String, required: true },
+  amount: { type: Number, required: true },
+  timestamp: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model("Transaction", transactionSchema);
+```
+
+- **Staking.js**:
+```javascript
+const mongoose = require("mongoose");
+
+const stakingSchema = new mongoose.Schema({
+  user: { type: String, required: true },
+  amount: { type: Number, required: true },
+  rewards: { type: Number, default: 0 },
+  timestamp: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model("Staking", stakingSchema);
+```
+
+#### **3. Controladores (`backend/controllers/`)**
+
+- **authController.js**:
+```javascript
+const User = require("../models/User");
+const jwt = require("jsonwebtoken");
+
+const login = async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await User.findOne({ username });
+    if (!user || user.password !== password) {
+      return res.status(400).json({ error: "Credenciais inválidas." });
+    }
+    const token = jwt.sign({ userId: user._id, isAdmin: user.isAdmin }, "secret-key", { expiresIn: "1h" });
+    res.json({ token, balance: user.balance, isAdmin: user.isAdmin });
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao fazer login." });
+  }
+};
+
+module.exports = { login };
+```
+
+- **paymentController.js**:
+```javascript
+const User = require("../models/User");
+const Transaction = require("../models/Transaction");
+
+const sendPayment = async (req, res) => {
+  const { recipient_id, amount } = req.body;
+  const sender = req.user.userId;
+  try {
+    const senderUser = await User.findById(sender);
+    const recipientUser = await User.findOne({ username: recipient_id });
+    if (!recipientUser) {
+      return res.status(400).json({ error: "Destinatário não encontrado." });
+    }
+    if (senderUser.balance < amount) {
+      return res.status(400).json({ error: "Saldo insuficiente." });
+    }
+    senderUser.balance -= amount;
+    recipientUser.balance += amount;
+    await senderUser.save();
+    await recipientUser.save();
+    const transaction = new Transaction({ sender: senderUser.username, recipient: recipientUser.username, amount });
+    await transaction.save();
+    res.json({ message: "Pagamento realizado com sucesso." });
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao realizar pagamento." });
+  }
+};
+
+module.exports = { sendPayment };
+```
+
+- **stakingController.js**:
+```javascript
+const Staking = require("../models/Staking");
+
+const stake = async (req, res) => {
+  const { amount } = req.body;
+  const user = req.user.userId;
+  try {
+    const staking = new Staking({ user, amount });
+    await staking.save();
+    res.json({ message: "Staking realizado com sucesso.", rewards: staking.rewards });
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao realizar staking." });
+  }
+};
+
+module.exports = { stake };
+```
+
+- **adminController.js**:
+```javascript
+const User = require("../models/User");
+
+const getUsers = async (req, res) => {
+  try {
+    const users = await User.find({}, { password: 0 });
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao buscar usuários." });
+  }
+};
+
+module.exports = { getUsers };
+```
+
+#### **4. Rotas (`backend/routes/`)**
+
+- **authRoutes.js**:
+```javascript
+const express = require("express");
+const { login } = require("../controllers/authController");
+
+const router = express.Router();
+
+router.post("/login", login);
+
+module.exports = router;
+```
+
+- **paymentRoutes.js**:
+```javascript
+const express = require("express");
+const { sendPayment } = require("../controllers/paymentController");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+router.post("/pay", authMiddleware, sendPayment);
+
+module.exports = router;
+```
+
+- **stakingRoutes.js**:
+```javascript
+const express = require("express");
+const { stake } = require("../controllers/stakingController");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+router.post("/stake", authMiddleware, stake);
+
+module.exports = router;
+```
+
+- **adminRoutes.js**:
+```javascript
+const express = require("express");
+const { getUsers } = require("../controllers/adminController");
+const authMiddleware = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+router.get("/admin/users", authMiddleware, getUsers);
+
+module.exports = router;
+```
+
+#### **5. Middleware (`backend/middleware/authMiddleware.js`)**
+```javascript
+const jwt = require("jsonwebtoken");
+
+const authMiddleware = (req, res, next) => {
+  const token = req.header("Authorization")?.replace("Bearer ", "");
+  if (!token) {
+    return res.status(401).json({ error: "Acesso negado. Token não fornecido." });
+  }
+  try {
+    const decoded = jwt.verify(token, "secret-key");
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(400).json({ error: "Token inválido." });
+  }
+};
+
+module.exports = authMiddleware;
+```
+
+#### **6. Servidor (`backend/server.js`)**
+```javascript
+const express = require("express");
+const connectDB = require("./config/db");
+const authRoutes = require("./routes/authRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const stakingRoutes = require("./routes/stakingRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+
+const app = express();
+const PORT = 5000;
+
+// Conectar ao MongoDB
+connectDB();
+
+// Middleware
+app.use(express.json());
+
+// Rotas
+app.use("/api/auth", authRoutes);
+app.use("/api/payment", paymentRoutes);
+app.use("/api/staking", stakingRoutes);
+app.use("/api/admin", adminRoutes);
+
+// Iniciar servidor
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
+```
+
+---
+
+### **Frontend (React)**
+
+#### **1. API Helper (`frontend/src/api.js`)**
+```javascript
+import axios from "axios";
+
+const api = axios.create({
+  baseURL: "http://localhost:5000/api",
+});
+
+export const login = async (username, password) => {
+  const response = await api.post("/auth/login", { username, password });
+  return response.data;
+};
+
+export const sendPayment = async (recipient, amount, token) => {
+  const response = await api.post(
+    "/payment/pay",
+    { recipient_id: recipient, amount },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return response.data;
+};
+
+export const stake = async (amount, token) => {
+  const response = await api.post(
+    "/staking/stake",
+    { amount },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return response.data;
+};
+
+export const getUsers = async (token) => {
+  const response = await api.get("/admin/users", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
+```
+
+#### **2. Componentes (`frontend/src/components/`)**
+
+- **Login.jsx**, **Dashboard.jsx**, **Staking.jsx**, **AdminPanel.jsx**: Mantenha os componentes que já foram criados, mas atualize as chamadas de API para usar o `api.js`.
+
+---
+
+### **Como Executar o Projeto**
+
+1. **Backend**:
+   - Instale as dependências: `npm install`.
+   - Inicie o servidor: `node backend/server.js`.
+
+2. **Frontend**:
+   - Instale as dependências: `npm install`.
+   - Inicie o servidor de desenvolvimento: `npm start`.
+
+---
+
+### **Próximos Passos**
+
+1. **Adicionar Gateway de Pagamentos**:
+   - Integrar com gateways como PayPal, Stripe ou PagSeguro.
+2. **Implementar Compartilhamento de Acesso Restrito**:
+   - Criar um sistema de permissões para administradores.
+3. **Testes e Auditoria**:
+   - Testar todas as funcionalidades e realizar auditorias de segurança.
+
+Se precisar de mais ajustes ou novas funcionalidades, é só avisar! 🚀
